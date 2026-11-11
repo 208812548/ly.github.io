@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>达尔文地雀 · 喙型预测活动</title>
+<!-- 固定为原项目使用的 Cesium 1.95；脚本、样式和 Worker 统一从 CDN 加载。 -->
+<script>
+  window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.95.0/Build/Cesium/';
+</script>
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.95.0/Build/Cesium/Cesium.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/cesium@1.95.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family:'Microsoft YaHei','微软雅黑',sans-serif;
+  background:#0d1117; height:100vh; overflow:hidden;
+  display:flex; flex-direction:column; color:white;
+}
+
+/* ── Title Bar ─────────────────────────────── */
+#titleBar {
+  height:54px;
+  background:linear-gradient(135deg,#1a237e,#0d47a1,#01579b);
+  display:flex; align-items:center; padding:0 24px;
+  box-shadow:0 2px 12px rgba(0,0,0,.5);
+  z-index:200; flex-shrink:0; gap:14px;
+}
+#titleBar h1 { font-size:19px; font-weight:700; letter-spacing:2px; }
+#titleBar .sep { opacity:.3; }
+#titleBar .tip { font-size:12px; color:rgba(255,255,255,.65); }
+#steps { margin-left:auto; display:flex; gap:6px; }
+.step {
+  padding:4px 13px; border-radius:20px; font-size:12px; white-space:nowrap;
+  background:rgba(255,255,255,.12); color:rgba(255,255,255,.5); transition:all .3s;
+}
+.step.active { background:rgba(255,255,255,.9); color:#0d47a1; font-weight:700; }
+
+/* ── Map Area ──────────────────────────────── */
+#mapArea { flex:1; position:relative; overflow:hidden; }
+#cesiumContainer { width:100%; height:100%; }
+
+/* ── Labels Panel ──────────────────────────── */
+#labelsPanel {
+  position:absolute; top:16px; left:16px;
+  background:rgba(10,14,24,.9);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:12px; padding:14px 16px 12px;
+  backdrop-filter:blur(10px); z-index:100;
+}
+#labelsPanel .ptitle {
+  font-size:10px; color:rgba(255,255,255,.45);
+  letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px;
+}
+.chip {
+  display:flex; align-items:center; gap:10px;
+  padding:10px 14px; border-radius:9px; margin-bottom:7px;
+  cursor:grab; user-select:none;
+  transition:transform .15s, box-shadow .15s, opacity .3s;
+  min-width:180px;
+}
+.chip:last-child { margin-bottom:0; }
+.chip:hover { transform:scale(1.04); box-shadow:0 4px 18px rgba(0,0,0,.5); }
+.chip:active { cursor:grabbing; }
+.chip.used { opacity:.55; }
+#chip-big   { background:linear-gradient(135deg,#1a5276,#2980b9); }
+#chip-small { background:linear-gradient(135deg,#1a5276,#2980b9); }
+#chip-cactus { background:linear-gradient(135deg,#1a5276,#2980b9); }
+.chip-icon { flex-shrink:0; }
+.chip-text { display:flex; flex-direction:column; }
+.chip-name { font-size:15px; font-weight:700; line-height:1.2; }
+.chip-hint { font-size:10px; opacity:.72; margin-top:2px; }
+
+/* ── Popup ─────────────────────────────────── */
+#popup {
+  position:absolute;
+  background:rgba(10,14,24,.96);
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:13px; padding:18px 20px; max-width:320px;
+  backdrop-filter:blur(12px);
+  box-shadow:0 10px 36px rgba(0,0,0,.65);
+  z-index:150; display:none; animation:fadeUp .22s ease;
+}
+#popup::after {
+  content:''; position:absolute;
+  bottom:-9px; left:22px; width:17px; height:17px;
+  background:rgba(10,14,24,.96);
+  border-right:1px solid rgba(255,255,255,.18);
+  border-bottom:1px solid rgba(255,255,255,.18);
+  transform:rotate(45deg);
+}
+#popup .pname  { font-size:16px; font-weight:700; margin-bottom:2px; }
+#popup .psub   { font-size:11px; opacity:.55; margin-bottom:10px; }
+#popup .pdesc  { font-size:12px; line-height:1.75; opacity:.87; margin-bottom:12px; }
+#popup .pbars  {
+  background:rgba(255,255,255,.05); border-radius:8px;
+  padding:10px 12px; margin-bottom:10px;
+}
+#popup .pbars .bar-title {
+  font-size:10px; color:rgba(255,255,255,.4); letter-spacing:1px;
+  text-transform:uppercase; margin-bottom:8px;
+}
+#popup .bar-row {
+  display:flex; align-items:center; gap:8px; margin-bottom:6px;
+}
+#popup .bar-row:last-child { margin-bottom:0; }
+#popup .bar-label { font-size:11px; opacity:.7; width:56px; flex-shrink:0; }
+#popup .bar-track {
+  flex:1; height:8px; background:rgba(255,255,255,.1); border-radius:4px; overflow:hidden;
+}
+#popup .bar-fill {
+  height:100%; border-radius:4px; width:0;
+  transition:width .8s cubic-bezier(.25,.8,.25,1);
+}
+#popup .bar-tag { font-size:10px; opacity:.6; width:60px; text-align:right; flex-shrink:0; }
+#popup .pq {
+  font-size:12px; color:#ffcc80; margin-top:4px;
+  font-weight:600; letter-spacing:.3px; line-height:1.6;
+}
+#popup .pcls { position:absolute; top:10px; right:13px; cursor:pointer; opacity:.45; font-size:16px; }
+#popup .pcls:hover { opacity:1; }
+
+/* ── Bottom Panel ──────────────────────────── */
+#bottomPanel {
+  min-height:214px; background:#0d1117;
+  border-top:1px solid rgba(255,255,255,.07);
+  padding:14px 20px; display:flex; gap:14px;
+  align-items:stretch; flex-shrink:0; z-index:100;
+}
+#islandCards {
+  flex:1;
+  display:grid;
+  grid-template-columns:repeat(5, minmax(132px, 1fr));
+  gap:12px;
+}
+.icard {
+  border-radius:12px;
+  border:2px dashed rgba(255,255,255,.18);
+  background:rgba(255,255,255,.025);
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  position:relative; overflow:hidden;
+  transition:border-color .2s, background .2s;
+}
+.icard:hover   { border-color:rgba(255,255,255,.35); }
+.icard.over    { border-color:#64b5f6; border-style:solid; background:rgba(100,181,246,.09); }
+.icard.correct { border-color:#66bb6a; border-style:solid; background:rgba(102,187,106,.09); }
+.icard.shaking { animation:shake .4s ease; border-color:#ef5350; border-style:solid; }
+.icard .cname  { font-size:15px; font-weight:700; margin-bottom:2px; text-align:center; line-height:1.3; }
+.icard .cen    { font-size:10px; opacity:.38; margin-bottom:8px; }
+.icard .chint  { font-size:11px; opacity:.42; text-align:center; line-height:1.45; padding:0 8px; }
+.icard .cmeta  { font-size:10px; opacity:.34; text-align:center; line-height:1.35; max-width:150px; }
+.answer-badge {
+  position:absolute; bottom:0; left:0; right:0; height:36px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:700; text-align:center; padding:0 8px;
+  border-radius:0 0 10px 10px;
+  background:rgba(102,187,106,.25); color:#a5d6a7;
+}
+.wrong-tip {
+  position:absolute; top:8px; font-size:12px;
+  color:#ef9a9a; animation:fadeUp .2s ease;
+}
+.pop-check {
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size:44px; animation:popIn .45s ease; pointer-events:none;
+}
+
+/* ── Side Panel ────────────────────────────── */
+#sidePanel {
+  min-width:116px; display:flex;
+  flex-direction:column; justify-content:center; gap:8px;
+}
+.btn {
+  padding:10px; border:none; border-radius:9px; cursor:pointer;
+  font-size:13px; font-family:'微软雅黑',sans-serif;
+  font-weight:700; width:100%; transition:all .2s;
+}
+#btnRecord { background:linear-gradient(135deg,#1565c0,#0d47a1); color:#fff; }
+#btnRecord:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(21,101,192,.4); }
+#btnReset  { background:rgba(255,255,255,.08); color:rgba(255,255,255,.6); border:1px solid rgba(255,255,255,.12); }
+#btnReset:hover  { background:rgba(255,255,255,.13); }
+#progText  { font-size:11px; color:rgba(255,255,255,.38); text-align:center; }
+
+/* ── Toast ─────────────────────────────────── */
+#toast {
+  position:fixed; top:62px; left:50%;
+  transform:translateX(-50%) translateY(-16px);
+  background:rgba(20,24,34,.96); border:1px solid rgba(255,255,255,.13);
+  border-radius:9px; padding:10px 20px; font-size:13px;
+  z-index:999; opacity:0; transition:all .28s; pointer-events:none;
+  backdrop-filter:blur(8px); white-space:nowrap;
+}
+#toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* ── Modal ─────────────────────────────────── */
+#modal {
+  position:fixed; inset:0; background:rgba(0,0,0,.72);
+  z-index:500; display:none; align-items:center; justify-content:center;
+  backdrop-filter:blur(5px);
+}
+#modal.show { display:flex; }
+#modalBox {
+  background:#161b27; border:1px solid rgba(255,255,255,.14);
+  border-radius:16px; padding:28px; max-width:480px; width:90%;
+  box-shadow:0 24px 64px rgba(0,0,0,.8); animation:fadeUp .25s ease;
+}
+#modalBox h2 { font-size:17px; margin-bottom:16px; }
+.rrow {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:10px 14px; border-radius:9px; margin-bottom:8px;
+  background:rgba(255,255,255,.04);
+}
+.rrow.ok { border-left:3px solid #66bb6a; }
+.rrow.no { border-left:3px solid rgba(255,255,255,.18); color:rgba(255,255,255,.38); }
+.rrow .ri small { font-size:11px; display:block; opacity:.55; margin-top:2px; }
+.rrow .ra { font-size:14px; font-weight:700; }
+#noteArea {
+  width:100%; background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.13); border-radius:9px;
+  color:#fff; padding:10px 12px; font-family:'微软雅黑',sans-serif;
+  font-size:13px; resize:none; height:72px; margin:12px 0 18px; outline:none;
+}
+.mbts { display:flex; gap:10px; justify-content:flex-end; }
+.mbts button {
+  padding:9px 22px; border-radius:8px; border:none; cursor:pointer;
+  font-family:'微软雅黑',sans-serif; font-size:13px; font-weight:700;
+}
+#btnSave   { background:#1565c0; color:#fff; }
+#btnClose2 { background:rgba(255,255,255,.09); color:rgba(255,255,255,.65); }
+
+/* ── Summary Modal ─────────────────────────── */
+#summaryModal {
+  position:fixed; inset:0; background:rgba(0,0,0,.78);
+  z-index:600; display:none; align-items:center; justify-content:center;
+  backdrop-filter:blur(6px); overflow-y:auto;
+}
+#summaryModal.show { display:flex; }
+#summaryBox {
+  background:#161b27; border:1px solid rgba(255,255,255,.14);
+  border-radius:16px; padding:32px; max-width:760px; width:92%;
+  box-shadow:0 24px 64px rgba(0,0,0,.8); animation:fadeUp .35s ease;
+  margin:24px auto;
+}
+#summaryBox h2 { font-size:18px; margin-bottom:6px; }
+#summaryBox .ssub { font-size:12px; opacity:.45; margin-bottom:22px; }
+
+/* 岛屿对比卡片 */
+.sum-card {
+  background:rgba(255,255,255,.04); border-radius:12px;
+  padding:16px 18px; margin-bottom:12px;
+  border-left:4px solid;
+}
+.sum-card-head {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:10px;
+}
+.sum-card-island { font-size:15px; font-weight:700; }
+.sum-card-beak {
+  display:inline-block; padding:3px 12px; border-radius:12px;
+  font-size:12px; font-weight:700;
+}
+.sum-card-row {
+  display:flex; align-items:center; gap:8px; margin-bottom:5px;
+}
+.sum-card-row:last-child { margin-bottom:0; }
+.sum-card-label { font-size:11px; opacity:.55; width:56px; flex-shrink:0; }
+.sum-card-text { font-size:12px; opacity:.82; line-height:1.55; }
+.sum-card-track { flex:1; height:7px; background:rgba(255,255,255,.08); border-radius:4px; overflow:hidden; }
+.sum-card-fill { height:100%; border-radius:4px; transition:width 1s cubic-bezier(.25,.8,.25,1); }
+.sum-card-val { font-size:11px; opacity:.65; width:70px; text-align:right; flex-shrink:0; }
+
+/* 喙深对比条 */
+.sum-depth-section { margin:20px 0 16px; }
+.sum-depth-title { font-size:12px; opacity:.45; margin-bottom:10px; letter-spacing:.5px; }
+.sum-depth-row {
+  display:flex; align-items:center; gap:10px; margin-bottom:8px;
+}
+.sum-depth-name { font-size:12px; width:70px; flex-shrink:0; font-weight:600; }
+.sum-depth-track { flex:1; height:14px; background:rgba(255,255,255,.06); border-radius:7px; overflow:hidden; position:relative; }
+.sum-depth-fill { height:100%; border-radius:7px; transition:width 1.2s cubic-bezier(.25,.8,.25,1); display:flex; align-items:center; justify-content:flex-end; padding-right:6px; }
+.sum-depth-num { font-size:10px; font-weight:700; color:rgba(255,255,255,.9); }
+
+/* 结论区 */
+.sum-conclusion {
+  background:rgba(255,255,255,.05); border-radius:10px;
+  padding:16px 18px; font-size:13px; line-height:1.85; margin-bottom:12px;
+}
+.sum-conclusion strong { color:#ffcc80; }
+.sum-conclusion .sum-point {
+  display:flex; align-items:flex-start; gap:8px; margin-bottom:6px;
+}
+.sum-conclusion .sum-point:last-child { margin-bottom:0; }
+.sum-conclusion .sum-num {
+  flex-shrink:0; width:20px; height:20px; border-radius:50%;
+  background:rgba(255,255,255,.1); display:flex; align-items:center;
+  justify-content:center; font-size:11px; font-weight:700; color:#ffcc80; margin-top:1px;
+}
+.sum-source {
+  font-size:10px; opacity:.3; line-height:1.5; margin-bottom:16px;
+}
+.sum-btns { display:flex; gap:10px; justify-content:flex-end; }
+.sum-btns button {
+  padding:9px 22px; border-radius:8px; border:none; cursor:pointer;
+  font-family:'微软雅黑',sans-serif; font-size:13px; font-weight:700;
+}
+#btnSumRecord { background:#1565c0; color:#fff; }
+#btnSumClose  { background:rgba(255,255,255,.09); color:rgba(255,255,255,.65); }
+
+/* ── Animations ────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity:0; transform:translateY(10px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+@keyframes popIn {
+  0%  { transform:scale(0); opacity:0; }
+  65% { transform:scale(1.25); }
+  100%{ transform:scale(1); opacity:1; }
+}
+@keyframes shake {
+  0%,100%{ transform:translateX(0); }
+  20%    { transform:translateX(-9px); }
+  40%    { transform:translateX(9px); }
+  60%    { transform:translateX(-6px); }
+  80%    { transform:translateX(6px); }
+}
+.cesium-viewer-bottom,
+.cesium-viewer-timelineContainer,
+.cesium-viewer-animationContainer { display:none !important; }
+.cesium-viewer-toolbar { right:8px !important; top:8px !important; }
+</style>
+</head>
+<body>
+
+<!-- ── Title Bar ───────────────────────────── -->
+<div id="titleBar">
+  <h1>达尔文地雀 · 喙型预测</h1>
+  <span class="sep">|</span>
+  <span class="tip">① 点击案例了解食物环境 &nbsp;→&nbsp; ② 将喙型和喙特征拖到对应卡片</span>
+  <div id="steps">
+    <span class="step active" id="s1">① 了解环境</span>
+    <span class="step"        id="s2">② 预测匹配</span>
+    <span class="step"        id="s3">③ 记录结果</span>
+  </div>
+</div>
+
+<!-- ── Map Area ────────────────────────────── -->
+<div id="mapArea">
+  <div id="cesiumContainer"></div>
+
+  <!-- 喙型标签面板 -->
+  <div id="labelsPanel">
+    <div class="ptitle">喙型与特征标签 — 可重复拖拽</div>
+
+    <!-- 大而深喙 -->
+    <div class="chip" id="chip-big" draggable="true" data-label="大喙">
+      <div class="chip-icon">
+        <svg viewBox="0 0 68 40" width="68" height="40" xmlns="http://www.w3.org/2000/svg">
+          <!-- 上颌：粗短有力 -->
+          <path d="M4,7 C18,1 46,3 64,20 C46,13 18,14 4,18 Z"
+                fill="rgba(255,255,255,.92)" stroke="rgba(0,0,0,.15)" stroke-width=".5"/>
+          <!-- 下颌：粗短有力 -->
+          <path d="M4,22 C18,27 46,28 64,20 C46,24 18,30 4,32 Z"
+                fill="rgba(255,255,255,.65)" stroke="rgba(0,0,0,.15)" stroke-width=".5"/>
+        </svg>
+      </div>
+      <div class="chip-text">
+        <span class="chip-name">大而深喙</span>
+        <span class="chip-hint">粗壮 · 深宽 · 咬合力强</span>
+      </div>
+    </div>
+
+    <!-- 小喙 -->
+    <div class="chip" id="chip-small" draggable="true" data-label="小喙">
+      <div class="chip-icon">
+        <svg viewBox="0 0 68 40" width="68" height="40" xmlns="http://www.w3.org/2000/svg">
+          <!-- 上颌：细长尖锐 -->
+          <path d="M4,15 C22,11 50,12 66,20 C50,15 22,16 4,17 Z"
+                fill="rgba(255,255,255,.92)" stroke="rgba(0,0,0,.15)" stroke-width=".5"/>
+          <!-- 下颌：细长尖锐 -->
+          <path d="M4,17 C22,18 50,19 66,20 C50,22 22,23 4,19 Z"
+                fill="rgba(255,255,255,.65)" stroke="rgba(0,0,0,.15)" stroke-width=".5"/>
+        </svg>
+      </div>
+      <div class="chip-text">
+        <span class="chip-name">小喙</span>
+        <span class="chip-hint">较小 · 轻巧 · 避开大种子竞争</span>
+      </div>
+    </div>
+
+    <!-- 长尖喙 -->
+    <div class="chip" id="chip-cactus" draggable="true" data-label="长尖喙">
+      <div class="chip-icon">
+        <svg viewBox="0 0 68 40" width="68" height="40" xmlns="http://www.w3.org/2000/svg">
+          <!-- 上颌：长而尖 -->
+          <path d="M4,14 C22,7 50,9 66,20 C51,14 23,15 4,17 Z"
+                fill="rgba(255,255,255,.92)" stroke="rgba(0,0,0,.15)" stroke-width=".5"/>
+          <!-- 下颌：长而尖 -->
+          <path d="M4,19 C23,21 51,23 66,20 C51,25 22,25 4,22 Z"
+                fill="rgba(255,255,255,.65)" stroke="rgba(0,0,0,.15)" stroke-width=".5"/>
+        </svg>
+      </div>
+      <div class="chip-text">
+        <span class="chip-name">长尖喙</span>
+        <span class="chip-hint">细长 · 探入仙人掌花果</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 岛屿信息弹窗 -->
+  <div id="popup">
+    <span class="pcls" onclick="closePopup()">✕</span>
+    <div class="pname" id="pName"></div>
+    <div class="psub"  id="pSub"></div>
+    <div class="pdesc" id="pDesc"></div>
+    <div class="pbars" id="pBars"></div>
+    <div class="pq"    id="pQ"></div>
+  </div>
+</div>
+
+<!-- ── Bottom Panel ────────────────────────── -->
+<div id="bottomPanel">
+
+  <div id="islandCards"></div>
+
+  <div id="sidePanel">
+    <div id="progText">已完成 0 / 5</div>
+    <button class="btn" id="btnRecord" onclick="openModal()">📋 点击记录</button>
+    <button class="btn" id="btnReset"  onclick="resetAll()">↺ 重置</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="modal">
+  <div id="modalBox">
+    <h2>📋 预测记录单</h2>
+    <div id="modalContent"></div>
+    <textarea id="noteArea" placeholder="补充说明：写下你的推理依据……"></textarea>
+    <div class="mbts">
+      <button id="btnClose2" onclick="closeModal()">关闭</button>
+      <button id="btnSave"   onclick="saveRecord()">💾 保存记录</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Summary Modal ──────────────────────── -->
+<div id="summaryModal">
+  <div id="summaryBox">
+    <h2>五个案例对比总结</h2>
+    <div class="ssub">你已完成全部匹配，来看看五个证据较强的食物-喙型案例</div>
+    <div id="summaryContent"></div>
+    <div class="sum-btns">
+      <button id="btnSumClose" onclick="closeSummary()">关闭</button>
+      <button id="btnSumRecord" onclick="openModal();closeSummary();">查看记录单</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════
+   岛屿数据（突出食物→喙型逻辑）
+   ══════════════════════════════════════════ */
+const ISLANDS = {
+  daphne1977: {
+    name:'达芙妮大岛', sub:'Daphne Major · 1977年严重干旱',
+    mapLabel:'达芙妮·1977',
+    cardSub:'1977干旱事件 · 中地雀',
+    desc:'这是达芙妮大岛的一个特定年份案例，不代表该岛永远只有一种喙型。1977年严重干旱后，小而易处理的种子迅速减少，较大、较硬的蒺藜 Tribulus cistoides 果实/种子成为关键食物。中地雀若要获得足够能量，就需要更强的压裂能力。',
+    bars:[{label:'颗粒大小',val:82,tag:'较大'},{label:'硬度/压力',val:88,tag:'硬种子'},{label:'竞争/限制',val:78,tag:'干旱强'}],
+    question:'→ 干旱后硬种子成为关键食物，哪种喙更容易存活？',
+    correct:'大喙', lon:-90.3920, lat:-0.4060,
+    summary:{beak:'中地雀 G. fortis',feature:'大而深喙；咬合力增强',depth:'9.96',food:'硬的 Tribulus 种子',source:'Grant & Grant 对 Daphne Major 的长期研究'}
+  },
+  daphne1985: {
+    name:'达芙妮大岛', sub:'Daphne Major · 1982-1983强厄尔尼诺后',
+    mapLabel:'达芙妮·1985',
+    cardSub:'1982-1983湿润事件后 · 中地雀',
+    desc:'这是同一座达芙妮大岛的湿润事件案例，说明选择方向会随降雨和种子结构改变。1982-1983年强厄尔尼诺带来异常降雨，植物大量生长和结实，小种子资源增加；到1985年的条件下，中地雀中喙较小、较尖的个体更容易利用这些小种子。',
+    bars:[{label:'颗粒大小',val:28,tag:'小'},{label:'硬度/压力',val:32,tag:'较软'},{label:'竞争/限制',val:58,tag:'湿润后'}],
+    question:'→ 湿润事件后小种子资源增加时，中地雀哪种喙更有利？',
+    correct:'小喙', lon:-90.3560, lat:-0.4360,
+    summary:{beak:'中地雀 G. fortis',feature:'小而较尖；适合小种子',depth:'偏小',food:'强厄尔尼诺后增加的小种子',source:'Gibbs & Grant 1987；Grant & Grant 达芙妮长期研究'}
+  },
+  genovesa: {
+    name:'热那维萨岛', sub:'Genovesa · 大地雀硬种子案例',
+    mapLabel:'热那维萨岛',
+    cardSub:'大地雀 · 硬种子',
+    desc:'热那维萨岛干季有大而硬的种子资源，例如 Cordia lutea 和 Opuntia helleri 的硬种子。若要获得足够能量，就需要能够压裂硬种子的强咬合能力。',
+    bars:[{label:'颗粒大小',val:92,tag:'大'},{label:'硬度/压力',val:95,tag:'极硬'},{label:'竞争/限制',val:55,tag:'干季'}],
+    question:'→ 面对大而硬的种子，哪种喙最适合压裂外壳？',
+    correct:'大喙', lon:-89.9587, lat:0.3264,
+    summary:{beak:'大地雀 G. magnirostris',feature:'深宽粗壮；咬合力强',depth:'17.94',food:'Cordia 与 Opuntia 硬种子',source:'Genovesa 大地雀食性与喙形研究'}
+  },
+  espanola: {
+    name:'埃斯帕尼奥拉岛', sub:'Española · 大仙人掌地雀',
+    mapLabel:'埃斯帕尼奥拉岛',
+    cardSub:'大仙人掌地雀 · 仙人掌资源',
+    desc:'埃斯帕尼奥拉岛的大仙人掌地雀利用 Opuntia 仙人掌资源，包括花、花蜜、果实、种子周围组织，也会取食节肢动物。若要有效利用这些花果资源，就需要能够伸入花果间隙并取食的喙形。',
+    bars:[{label:'颗粒大小',val:62,tag:'花果'},{label:'硬度/压力',val:42,tag:'中等'},{label:'竞争/限制',val:68,tag:'需探取'}],
+    question:'→ 主要利用仙人掌花果资源时，哪种喙更合适？',
+    correct:'长尖喙', lon:-89.6847, lat:-1.3742,
+    summary:{beak:'大仙人掌地雀 G. conirostris',feature:'长尖且结实；适合仙人掌花果',depth:'长尖型',food:'Opuntia 花、果、种子组织',source:'Charles Darwin Foundation 物种资料'}
+  },
+  cactusLowlands: {
+    name:'圣克鲁斯岛', sub:'Santa Cruz · 干旱低地 Opuntia 栖息地',
+    mapLabel:'圣克鲁斯岛',
+    cardSub:'普通仙人掌地雀 · 圣克鲁斯岛',
+    desc:'圣克鲁斯岛有明显的干旱低地带，其中分布 Opuntia 仙人掌。普通仙人掌地雀利用仙人掌的花、花蜜、花粉、果实、种子，也会取食相关昆虫幼虫。这里强调的是圣克鲁斯岛的干旱低地栖息地，而不是整座岛只有仙人掌一种食物。',
+    bars:[{label:'颗粒大小',val:48,tag:'花/种子'},{label:'硬度/压力',val:36,tag:'中低'},{label:'竞争/限制',val:74,tag:'需探入'}],
+    question:'→ 取食仙人掌花、花蜜和果实时，哪种喙最有优势？',
+    correct:'长尖喙', lon:-90.3120, lat:-0.6240,
+    summary:{beak:'普通仙人掌地雀 G. scandens',feature:'长尖；适合探入 Opuntia',depth:'长尖型',food:'圣克鲁斯岛干旱低地的 Opuntia 花、花蜜、果实、种子',source:'Charles Darwin Foundation 物种资料'}
+  }
+};
+
+const COLORS = {
+  daphne1977:'#E57373',
+  daphne1985:'#64B5F6',
+  genovesa:'#FF8A65',
+  espanola:'#FFD166',
+  cactusLowlands:'#81C784'
+};
+
+const TOTAL_CASES = Object.keys(ISLANDS).length;
+
+/* ══════════════════════════════════════════
+   Cesium 初始化
+   ══════════════════════════════════════════ */
+const viewer = new Cesium.Viewer('cesiumContainer', {
+  imageryProvider: new Cesium.UrlTemplateImageryProvider({
+    url: 'https://t{s}.tianditu.gov.cn/img_w/wmts?tk=adc35b4f8be4250b2002c1f5c8e2cdb2&SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+    subdomains: ['0','1','2','3','4','5','6','7'],
+    maximumLevel: 18
+  }),
+  terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+  animation:false, baseLayerPicker:false, fullscreenButton:false,
+  geocoder:false,  homeButton:false,      sceneModePicker:false,
+  selectionIndicator:false, timeline:false, navigationHelpButton:false,
+  infoBox:false
+});
+
+viewer.scene.screenSpaceCameraController.minimumZoomDistance = 80000;
+
+// 按案例范围直接定位；俯视岛群，避免斜视时视线落在岛屿以北。
+const caseLocations = Object.values(ISLANDS);
+viewer.camera.setView({
+  destination: Cesium.Rectangle.fromDegrees(
+    Math.min(...caseLocations.map(d => d.lon)) - 0.5,
+    Math.min(...caseLocations.map(d => d.lat)) - 0.5,
+    Math.max(...caseLocations.map(d => d.lon)) + 0.5,
+    Math.max(...caseLocations.map(d => d.lat)) + 0.5
+  ),
+  orientation: { heading:0, pitch:-Cesium.Math.PI_OVER_TWO, roll:0 }
+});
+
+function renderIslandCards() {
+  document.getElementById('islandCards').innerHTML =
+    Object.entries(ISLANDS).map(([id,d]) => `
+      <div class="icard" id="card-${id}"
+           ondragover="onOver(event)" ondragleave="onLeave(event)" ondrop="onDrop(event,'${id}')">
+        <div class="cname" style="color:${COLORS[id]}">${d.name}</div>
+        <div class="cen">${d.cardSub}</div>
+        <div class="chint" id="h-${id}">将喙型与特征标签拖到此处</div>
+        <div class="cmeta">${d.summary.beak}</div>
+      </div>
+    `).join('');
+}
+renderIslandCards();
+
+/* ══════════════════════════════════════════
+   绘制岛屿图钉
+   ══════════════════════════════════════════ */
+function makePinCanvas(color) {
+  const c = document.createElement('canvas');
+  c.width = 48; c.height = 60;
+  const ctx = c.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(24, 22, 19, 0, Math.PI*2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(14,37); ctx.lineTo(24,60); ctx.lineTo(34,37);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.beginPath();
+  ctx.arc(24, 22, 10, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fill();
+  return c;
+}
+
+Object.entries(ISLANDS).forEach(([id,d]) => {
+  viewer.entities.add({
+    id,
+    position: Cesium.Cartesian3.fromDegrees(d.lon, d.lat),
+    billboard: {
+      image: makePinCanvas(COLORS[id]),
+      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+      scale: 1.0,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
+    },
+    label: {
+      text: d.mapLabel || d.name,
+      font: 'bold 14px "Microsoft YaHei"',
+      fillColor: Cesium.Color.WHITE,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 2,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      pixelOffset: new Cesium.Cartesian2(0, -66),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY
+    }
+  });
+});
+
+/* ══════════════════════════════════════════
+   点击弹窗
+   ══════════════════════════════════════════ */
+const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+handler.setInputAction(function(click) {
+  const picked = viewer.scene.pick(click.position);
+  if (Cesium.defined(picked) && picked.id && ISLANDS[picked.id.id]) {
+    showPopup(ISLANDS[picked.id.id], click.position.x, click.position.y);
+    setStep(1);
+  } else {
+    closePopup();
+  }
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+function showPopup(d, x, y) {
+  const popup = document.getElementById('popup');
+  document.getElementById('pName').textContent = d.name;
+  document.getElementById('pSub').textContent  = d.sub;
+  document.getElementById('pDesc').textContent = d.desc;
+  document.getElementById('pQ').textContent    = d.question;
+
+  /* 渲染特征进度条 */
+  const barsEl = document.getElementById('pBars');
+  const barColors = ['#ef5350','#ff9800','#42a5f5'];
+  barsEl.innerHTML = '<div class="bar-title">食物/生态压力</div>' +
+    d.bars.map((b,i) =>
+      `<div class="bar-row">
+        <span class="bar-label">${b.label}</span>
+        <div class="bar-track">
+          <div class="bar-fill" data-val="${b.val}" style="background:${barColors[i]}"></div>
+        </div>
+        <span class="bar-tag">${b.tag}</span>
+      </div>`
+    ).join('');
+
+  const rect = document.getElementById('mapArea').getBoundingClientRect();
+  let left = x - rect.left + 12, top = y - rect.top - 220;
+  if (left + 330 > rect.width) left = x - rect.left - 340;
+  if (top < 8)                  top  = y - rect.top + 22;
+  popup.style.left = left+'px'; popup.style.top = top+'px';
+  popup.style.display = 'block';
+  popup.style.animation = 'none';
+  requestAnimationFrame(() => {
+    popup.style.animation = 'fadeUp .22s ease';
+    /* 延迟启动进度条动画 */
+    setTimeout(() => {
+      barsEl.querySelectorAll('.bar-fill').forEach(el => {
+        el.style.width = el.dataset.val + '%';
+      });
+    }, 150);
+  });
+}
+function closePopup() { document.getElementById('popup').style.display='none'; }
+
+/* ══════════════════════════════════════════
+   拖拽匹配
+   ══════════════════════════════════════════ */
+const state = Object.fromEntries(Object.keys(ISLANDS).map(id => [id, null]));
+
+document.querySelectorAll('.chip').forEach(chip => {
+  chip.addEventListener('dragstart', e => {
+    e.dataTransfer.setData('text/plain', chip.dataset.label);
+    chip.style.opacity = '.45';
+  });
+  chip.addEventListener('dragend', () => { chip.style.opacity=''; });
+});
+
+function onOver(e)  { e.preventDefault(); e.currentTarget.classList.add('over'); }
+function onLeave(e) { e.currentTarget.classList.remove('over'); }
+
+function onDrop(e, id) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('over');
+  const label = e.dataTransfer.getData('text/plain');
+  if (!label || state[id]==='correct') return;
+  label === ISLANDS[id].correct
+    ? markCorrect(id, label, e.currentTarget)
+    : markWrong(id, e.currentTarget);
+}
+
+function markCorrect(id, label, card) {
+  state[id] = 'correct';
+  card.classList.add('correct');
+  document.getElementById('h-'+id).style.display='none';
+
+  const badge = document.createElement('div');
+  badge.className = 'answer-badge';
+  badge.textContent = `✓ ${label} · ${ISLANDS[id].summary.feature}`;
+  card.appendChild(badge);
+
+  const pop = document.createElement('div');
+  pop.className = 'pop-check'; pop.textContent = '✅';
+  card.appendChild(pop);
+  setTimeout(() => pop.remove(), 1100);
+
+  const done = Object.values(state).filter(v=>v==='correct').length;
+  document.getElementById('progText').textContent = `已完成 ${done} / ${TOTAL_CASES}`;
+  setStep(2);
+  toast(`✓ 正确！${ISLANDS[id].name} → ${label}`);
+  if (done===TOTAL_CASES) setTimeout(() => { setStep(3); showSummary(); }, 700);
+}
+
+function markWrong(id, card) {
+  card.classList.add('shaking');
+  const tip = document.createElement('div');
+  tip.className='wrong-tip'; tip.textContent='再想一想 🤔';
+  card.appendChild(tip);
+  setTimeout(() => { card.classList.remove('shaking'); tip.remove(); }, 1400);
+  toast(`💡 提示：${ISLANDS[id].name} — ${ISLANDS[id].question}`);
+}
+
+/* ══════════════════════════════════════════
+   工具
+   ══════════════════════════════════════════ */
+function setStep(n) {
+  for (let i=1;i<=3;i++)
+    document.getElementById('s'+i).classList.toggle('active',i<=n);
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function openModal() {
+  document.getElementById('modalContent').innerHTML =
+    Object.entries(ISLANDS).map(([id,d]) => {
+      const ok = state[id]==='correct';
+      return `<div class="rrow ${ok?'ok':'no'}">
+        <div class="ri">${d.name}<small>${d.summary.beak}</small></div>
+        <div class="ra" style="color:${ok?'#a5d6a7':'rgba(255,255,255,.3)'}">
+          ${ok?'✓ '+d.correct:'— 未完成'}
+        </div>
+      </div>`;
+    }).join('');
+  document.getElementById('modal').classList.add('show');
+}
+function closeModal() { document.getElementById('modal').classList.remove('show'); }
+
+/* ══════════════════════════════════════════
+   总结对比页
+   ══════════════════════════════════════════ */
+const BEAK_COLORS = {'大喙':'#ef5350','小喙':'#42a5f5','长尖喙':'#66bb6a'};
+
+function showSummary() {
+  const entries = Object.entries(ISLANDS);
+  const maxDepth = 17.94; /* 用于计算比例条宽度 */
+  let html = '';
+
+  /* ── 五个案例对比卡片 ── */
+  entries.forEach(([id,d]) => {
+    const s = d.summary;
+    const c = BEAK_COLORS[d.correct];
+    const ic = COLORS[id];
+    const sizeVal = d.bars[0].val;
+    const hardVal = d.bars[1].val;
+    html += `<div class="sum-card" style="border-color:${ic}">
+      <div class="sum-card-head">
+        <span class="sum-card-island" style="color:${ic}">${d.name}</span>
+        <span class="sum-card-beak" style="background:${c}33;color:${c}">${d.correct}</span>
+      </div>
+      <div class="sum-card-row">
+        <span class="sum-card-label">食物</span>
+        <span class="sum-card-text">${s.food}</span>
+      </div>
+      <div class="sum-card-row">
+        <span class="sum-card-label">代表雀</span>
+        <span class="sum-card-text">${s.beak}</span>
+      </div>
+      <div class="sum-card-row">
+        <span class="sum-card-label">喙特征</span>
+        <span class="sum-card-text">${s.feature}</span>
+      </div>
+      <div class="sum-card-row">
+        <span class="sum-card-label">颗粒大小</span>
+        <div class="sum-card-track"><div class="sum-card-fill" data-w="${sizeVal}" style="background:${ic}"></div></div>
+        <span class="sum-card-val">${d.bars[0].tag}</span>
+      </div>
+      <div class="sum-card-row">
+        <span class="sum-card-label">压力强度</span>
+        <div class="sum-card-track"><div class="sum-card-fill" data-w="${hardVal}" style="background:${ic}"></div></div>
+        <span class="sum-card-val">${d.bars[1].tag}</span>
+      </div>
+    </div>`;
+  });
+
+  /* ── 喙深/形态指标对比条形图 ── */
+  html += '<div class="sum-depth-section">';
+  html += '<div class="sum-depth-title">喙形指标对比（有实测喙深的案例显示 mm；长尖喙案例显示类型）</div>';
+  entries.forEach(([id,d]) => {
+    const s = d.summary;
+    const c = BEAK_COLORS[d.correct];
+    const numericDepth = parseFloat(s.depth);
+    const pct = Number.isFinite(numericDepth) ? (numericDepth / maxDepth * 100).toFixed(0) : (d.correct==='长尖喙' ? 68 : 44);
+    html += `<div class="sum-depth-row">
+      <span class="sum-depth-name" style="color:${COLORS[id]}">${d.correct}</span>
+      <div class="sum-depth-track">
+        <div class="sum-depth-fill" data-w="${pct}" style="background:${c}">
+          <span class="sum-depth-num">${Number.isFinite(numericDepth) ? s.depth + 'mm' : s.depth}</span>
+        </div>
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+
+  /* ── 结论 ── */
+  html += `<div class="sum-conclusion">
+    <div class="sum-point">
+      <span class="sum-num">1</span>
+      <span><strong>同一座达芙妮大岛并不是固定一种喙型</strong>：1977年严重干旱时硬种子选择大而深喙；1982-1983年强厄尔尼诺后的湿润条件增加小种子资源，随后小而较尖的中地雀更有优势。</span>
+    </div>
+    <div class="sum-point">
+      <span class="sum-num">2</span>
+      <span>热那维萨岛的大地雀是<strong>硬种子-粗壮深宽喙</strong>的稳定案例；这种喙能提供更高咬合力，用于压裂大而硬的种子。</span>
+    </div>
+    <div class="sum-point">
+      <span class="sum-num">3</span>
+      <span>埃斯帕尼奥拉岛和圣克鲁斯岛干旱低地显示<strong>仙人掌资源-长尖喙</strong>关系：长尖喙便于伸入 Opuntia 花和果实取食。</span>
+    </div>
+    <div class="sum-point">
+      <span class="sum-num">4</span>
+      <span>结论应写成<strong>食物资源和竞争压力改变不同喙形个体的生存优势</strong>，而不是简单说“某座岛永远只有一种食物、所有雀都一种喙”。</span>
+    </div>
+  </div>`;
+
+  html += `<div class="sum-source">
+    数据来源：Grant &amp; Grant 长期 Daphne Major 研究；Grant &amp; Grant (2024) Evolutionary Journal of the Linnean Society；Charles Darwin Foundation 物种资料；BMC Genomics 2013 喙形与食性综述。
+  </div>`;
+
+  document.getElementById('summaryContent').innerHTML = html;
+  document.getElementById('summaryModal').classList.add('show');
+  toast('🎉 全部匹配完成！');
+
+  /* 延迟启动条形动画 */
+  setTimeout(() => {
+    document.querySelectorAll('.sum-card-fill, .sum-depth-fill').forEach(el => {
+      el.style.width = el.dataset.w + '%';
+    });
+  }, 200);
+}
+
+function closeSummary() {
+  document.getElementById('summaryModal').classList.remove('show');
+}
+
+function saveRecord() {
+  const note = document.getElementById('noteArea').value;
+  const lines = Object.entries(ISLANDS).map(([id,d]) =>
+    `${d.name}（${d.sub}）→ ${state[id]==='correct'?d.correct:'未完成'}；喙特征：${d.summary.feature}`
+  );
+  const blob = new Blob(
+    ['【达尔文地雀·喙型预测记录】\n'+lines.join('\n')+(note?'\n\n推理说明：'+note:'')],
+    {type:'text/plain;charset=utf-8'}
+  );
+  Object.assign(document.createElement('a'),
+    {href:URL.createObjectURL(blob), download:'喙型预测记录.txt'}).click();
+  toast('✅ 记录已下载'); closeModal();
+}
+
+function resetAll() {
+  Object.keys(state).forEach(k=>state[k]=null);
+  document.querySelectorAll('.icard').forEach(card => {
+    card.classList.remove('correct','shaking','over');
+    card.querySelector('.answer-badge')?.remove();
+  });
+  document.querySelectorAll('.chint').forEach(h=>h.style.display='');
+  document.getElementById('progText').textContent=`已完成 0 / ${TOTAL_CASES}`;
+  setStep(1);
+  ['s2','s3'].forEach(s=>document.getElementById(s).classList.remove('active'));
+  closePopup();
+  toast('已重置，重新开始预测');
+}
+</script>
+</body>
+</html>
